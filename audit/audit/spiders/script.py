@@ -1,6 +1,6 @@
-from pathlib import Path
 import os
 import re
+import logging
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -34,16 +34,26 @@ class AuditSpider(scrapy.Spider):
     # Obtener todos los href de todos los enlaces
     def parse_href(self, response):
         return response.xpath("//a/@href").getall()
-
+    
     def get_all_href(self, response):
         links = self.parse_href(response)
 
         is_internal_link = [link.strip() for link in links if self.internal_link(link)]
-        yield from response.follow_all(urls=is_internal_link, callback=self.check)
+
+        for link in is_internal_link:
+            try:
+                yield response.follow(url=link, callback=self.check)
+            except:
+                # logging.info(f"No puedo seguir esta dirección {link}")
+
+                # Comentar esta linea si no se quiere que aparezca en el archivo
+                self.write_file(self.log_file, f"No puedo seguir esta dirección {link}")
 
     # Practicamente la logica parte de aqui
     def check(self, response):
-        self.write_file(self.log_file, f"\nComprobando... {response}")
+        self.write_file(self.log_file, f"\n---------------")
+        self.write_file(self.log_file, f"Comprobando... {response}")
+        self.write_file(self.log_file, f"---------------\n")
 
         # Obtener todos los href
         yield from self.get_all_href(response)
@@ -58,10 +68,6 @@ class AuditSpider(scrapy.Spider):
         self.get_contact_links(response)
         self.check_img_links(response)
 
-        # Cerrar archivo
-        # self.close_file(response, self.log_file)
-        # self.close_file(response, self.url_file)
-
     # Comprueba si archivos como sitemap.xml y robots.txt existen
     def check_file_exists(self, response, file):
         if response.url.rstrip("/") in self.start_urls:
@@ -69,14 +75,14 @@ class AuditSpider(scrapy.Spider):
 
             for link in links:
                 if file in link:
-                    self.write_file(self.log_file, f"El archivo {file} sí existe en {self.start_urls}.")
+                    self.write_file(self.log_file, f"El archivo {file} sí existe en {self.start_urls}")
                     return
-            self.write_file(self.log_file, f"El archivo {file} no existe en {self.start_urls}.")
+            self.write_file(self.log_file, f"El archivo {file} no existe en {self.start_urls}")
 
     # Comprueba si algun enlace da un mensaje de estado diferente a 200
     def check_broken_links(self, response):
         if response.status != 200:
-            self.write_file(self.log_file, f"Enlace con código de estado {response.status}.")
+            self.write_file(self.log_file, f"Enlace con código de estado {response.status}")
 
     # Comprueba si un enlace es HTTP en lugar de HTTPS
     def check_http(self, response):
@@ -93,9 +99,9 @@ class AuditSpider(scrapy.Spider):
 
         if link:
             if href == "" or href is None:
-                self.write_file(self.log_file, f"El href del favicon está vacío: {href} en {response}.")
+                self.write_file(self.log_file, f"El href del favicon está vacío: {href} en {response}")
         else:
-            self.write_file(self.log_file, f"No hay favicon: {link} en {response}.")
+            self.write_file(self.log_file, f"No hay favicon: {link} en {response}")
 
     # Obtiene los nodos de texto
     def get_text_nodes(self, response):
@@ -115,7 +121,7 @@ class AuditSpider(scrapy.Spider):
     def check_contact_links(self, node, text, pattern, link_type):
         if re.search(pattern, text):
             if node.xpath(f"(ancestor::a | self::a)[contains(@href, '{link_type}')]").get() is None:
-                self.write_file(self.log_file, f"{text} no tiene enlace de tipo {link_type}.")
+                self.write_file(self.log_file, f"{text} no tiene enlace de tipo {link_type}")
 
     # Comprueba si las imagenes tienen alt o si esta vacio
     def check_img_links(self, response):
@@ -125,18 +131,18 @@ class AuditSpider(scrapy.Spider):
             alt = img.xpath("./@alt").get()
 
             if alt is None:
-                self.write_file(self.log_file, f"El atributo alt no existe en {img}.")
+                self.write_file(self.log_file, f"El atributo alt no existe en {img}")
             elif alt == "":
-                self.write_file(self.log_file, f"El atributo alt está vacío en {img}.")
+                self.write_file(self.log_file, f"El atributo alt está vacío en {img}")
 
     # Comprueba si existe la etiqueta h1 en cada pagina
     def check_h1(self, response):
         h1 = response.xpath("//h1")
 
         if len(h1) == 0:
-            self.write_file(self.log_file, f"No hay ningún h1 en {response}.")
+            self.write_file(self.log_file, f"No hay ningún h1 en {response}")
         elif len(h1) > 1:
-            self.write_file(self.log_file, f"Hay más de una etiqueta h1 en {response}.")
+            self.write_file(self.log_file, f"Hay más de una etiqueta h1 en {response}")
 
     # Obtener los enlaces/dominios del archivo
     def get_urls(self):
@@ -159,7 +165,7 @@ class AuditSpider(scrapy.Spider):
     def internal_link(self, url):
         url_parsed = urlparse(url)
 
-        # urls internas
+        # URLs internas
         if not url_parsed.netloc:
             return True
 
@@ -178,3 +184,9 @@ class AuditSpider(scrapy.Spider):
 
     def close_file(self, filename):
         filename.close()
+
+    # Antes de cerrar el crawler
+    def close_spider(self, response):
+        # Cerrar archivo
+        self.close_file(response, self.log_file)
+        self.close_file(response, self.url_file)

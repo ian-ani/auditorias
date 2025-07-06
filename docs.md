@@ -217,6 +217,13 @@ Antes de continuar, la diferencia de **return** y **yield** es que el segundo se
 Mientras que el *return* corta la ejecución de una función, el *yield* solo la pausa hasta que vuelva a ser llamada. Además, el código que haya después de un *return* ya no es accesible, pero el que haya después de *yield* sí: esto quiere decir que una función puede tener varios *yield*.
 Por lo general, *yield* también suele ser más eficiente con la memoria.
 
+Nota 1: hay diferencias entre *yield* y *yield from*.
+
+- *yield*: produce un único valor (1, 2, 3, etc)
+- *yield from* itera sobre el iterable, es decir, hace un *yield* por cada uno de los elementos; éste es más compacto porque es como si se hubieran hecho varios *yield* uno detrás del otro sin tener que hacerlo implícitamente (manualmente)
+
+Nota 2: cuando se habla de generadores (como *yield*) se usa el término "produce" en lugar de "devuelve".
+
 ## Comprobación de enlaces rotos
 
 El código ahora:
@@ -695,33 +702,43 @@ Cada línea a escribir saldrá de todas las líneas anteriores de `logging.info(
 
 También el archivo de texto (que no hace falta crear porque lo hace automáticamente) tiene la fecha de creación.
 
-# ¡¡¡Problemas por resolver!!!
+# Problemas resueltos
 
-De momento funciona con mi web de Neocities, pero si encuentro algunas que estén muy horribles empieza a dar un error que creo que está relacionado con esta función:
+## Falla en algunas web pero no en otras
 
-```python
-    def internal_link(self, url):
-        url_parsed = urlparse(url)
-
-        # urls internas
-        if not url_parsed.netloc:
-            return True
-
-        for domain in self.allowed_domains:
-            if domain in url_parsed.netloc:
-                return True
-        return False 
-```
-
-También añadí **strip()**, que eliminar los espacios en blanco (tabulaciones, espacios, saltos de línea) en esta función:
+Esto se debe a que quiere seguir enlaces que no puede seguir como tal: esto son los **mailto:**, **tel:** y similares. Pero sí queremos analizar todos los enlaces, se puedan seguir o no. La manera de hacer que no "explote", se cuelgue o tire excepciones es precisamente con un try-catch (en Python **try-except**):
 
 ```python
     def get_all_href(self, response):
         links = self.parse_href(response)
 
         is_internal_link = [link.strip() for link in links if self.internal_link(link)]
-        yield from response.follow_all(urls=is_internal_link, callback=self.check)
+
+        for link in is_internal_link:
+            try:
+                yield response.follow(url=link, callback=self.check)
+            except:
+                self.write_file(self.log_file, f"No puedo seguir esta dirección {link}")
 ```
 
-Aún así sigue explotando en algunos sitios web y tira errores... también parece que de momento solo es capaz de comprobar un sitio.  
-Y por último, si se cierra el archivo en la función **check()** también explota.
+Simplemente hay que añadir esa línea ahí. La ejecución continuará normalmente y además mostrará en el archivo qué enlace se está "saltando".  
+También se ha cambiado la línea de `yield from` a un `yield` normal y se ha metido en un bucle `for`.
+A pesar de eso, la comprobación de teléfonos y correos que se hace en la función `check()` sí debería seguir funcionando.
+
+## Si se cierra el archivo en la función `check()` el programa explota
+
+Esto pasa porque el método `check()` se llama varias veces, una por respuesta, y entonces una vez que cierra el archivo la primera vez luego no puede escribir: además el archivo se abre solo una vez y no se vuelve a abrir así que se lo encuentra cerrado en las veces posteriores.
+
+```python 
+    def close_spider(self, response):
+        # Cerrar archivo
+        self.close_file(response, self.log_file)
+        self.close_file(response, self.url_file)
+```
+
+Scrapy tiene un método bastante autodescriptivo que es `close_spider()` donde cada vez que se va a cerrar la araña, primero ejecuta lo que se defina dentro de él. En este caso es el cierre de los dos archivos.  
+El cierre deja de estar en `check()` y pasa a `close_spider()`.
+
+# Problemas por resolver
+
+Me gustaría que procesara una página cada vez, de forma secuencial. Ahora mismo puede que primero compruebe un enlace de *página web 1*, luego otro de *página web 2* y luego otro de *página web 1* otra vez.
